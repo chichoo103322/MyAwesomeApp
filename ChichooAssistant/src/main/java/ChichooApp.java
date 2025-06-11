@@ -30,6 +30,7 @@ public class ChichooApp {
 
     public static void main(String[] args) {
         port(4567);
+        staticFiles.location("/public");
 
         // --- 最终版 CORS 跨域配置 ---
         before((request, response) -> {
