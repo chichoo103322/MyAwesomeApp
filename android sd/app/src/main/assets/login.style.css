@@ -1,0 +1,50 @@
+/* login.style.css */
+body, html {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: #F0F4F8; color: #333; height: 100%;
+    display: flex; justify-content: center; align-items: center;
+}
+.login-container {
+    background-color: #FFFFFF; padding: 40px; border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(21, 48, 92, 0.15);
+    width: 100%; max-width: 400px; text-align: center;
+}
+.login-container h1 {
+    margin: 0 0 10px 0; color: #172B4D; font-size: 24px;
+}
+.login-container .subtitle {
+    margin-bottom: 30px; color: #6B778C;
+}
+.input-group {
+    margin-bottom: 20px; text-align: left;
+}
+.input-group label {
+    display: block; margin-bottom: 8px; font-weight: 600;
+    font-size: 14px; color: #44546F;
+}
+.input-group input {
+    width: 100%; padding: 12px 15px; border: 1px solid #DDE2E8;
+    border-radius: 8px; font-size: 16px; box-sizing: border-box;
+    transition: border-color 0.2s ease-in-out;
+}
+.input-group input:focus {
+    outline: none; border-color: #007AFF;
+}
+button {
+    width: 100%; padding: 12px; border: none; border-radius: 8px;
+    background-color: #007AFF; color: white; font-size: 16px;
+    font-weight: 600; cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+}
+button:hover { background-color: #0056b3; }
+.error-text {
+    color: #d93025; font-size: 14px; height: 20px;
+}
+.register-link {
+    margin-top: 25px; font-size: 14px; color: #5A738E;
+}
+.register-link a {
+    color: #007AFF; text-decoration: none; font-weight: 600;
+}
+.register-link a:hover { text-decoration: underline; }
