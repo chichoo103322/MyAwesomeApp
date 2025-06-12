@@ -4,6 +4,8 @@
 
 import static spark.Spark.*;
 
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -12,7 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,15 +29,65 @@ import org.json.JSONObject;
 public class ChichooApp {
 
     private static final Map<String, String> users = new ConcurrentHashMap<>();
+    // 新增：用于存储所有用户聊天记录的 Map
+    private static final Map<String, List<Map<String, String>>> chatHistories = new ConcurrentHashMap<>();
+    // 新增：历史记录文件名
+    private static final String HISTORY_FILE = "chat_history.json";
+
+    // 新增：辅助方法 - 将内存中的聊天记录保存到文件
+    private static void saveHistoriesToFile() {
+        try (FileWriter file = new FileWriter(HISTORY_FILE)) {
+            // 将整个 chatHistories Map 转换成 JSON 字符串并写入文件
+            file.write(new JSONObject(chatHistories).toString(4)); // 使用 4 个空格进行缩进，美化格式
+            file.flush();
+        } catch (IOException e) {
+            System.err.println("保存聊天记录失败: " + e.getMessage());
+        }
+    }
+
+    // 新增：辅助方法 - 从文件加载聊天记录到内存
+    private static void loadHistoriesFromFile() {
+        try {
+            Path path = Paths.get(HISTORY_FILE);
+            if (Files.exists(path)) {
+                String content = Files.readString(path, StandardCharsets.UTF_8);
+                if (content.isEmpty()) { // 防止空文件导致解析错误
+                    System.out.println(HISTORY_FILE + " 为空，跳过加载。");
+                    return;
+                }
+                JSONObject jsonObject = new JSONObject(content);
+                // 遍历 JSON 对象，将其内容填充到 chatHistories Map 中
+                for (String key : jsonObject.keySet()) {
+                    List<Object> rawList = jsonObject.getJSONArray(key).toList();
+                    List<Map<String, String>> messages = new ArrayList<>();
+                    for (Object item : rawList) {
+                        if (item instanceof Map) {
+                            // 需要进行类型转换
+                            @SuppressWarnings("unchecked")
+                            Map<String, String> message = (Map<String, String>) item;
+                            messages.add(message);
+                        }
+                    }
+                    chatHistories.put(key, messages);
+                }
+                System.out.println("成功从 " + HISTORY_FILE + " 加载聊天记录。");
+            }
+        } catch (Exception e) { // 捕获更广泛的异常，如 JSON 解析错误
+            System.err.println("加载聊天记录失败: " + e.getMessage());
+        }
+    }
+
 
     public static void main(String[] args) {
         port(4567);
         staticFiles.location("/public");
 
-        // --- 最终版 CORS 跨域配置 ---
+        // 在服务器启动时，首先加载历史记录
+        loadHistoriesFromFile();
+
+        // --- CORS 配置 ---
         before((request, response) -> {
             String origin = request.headers("Origin");
-            // 动态地允许请求的来源，这对处理来自 WebView 的各种特殊 Origin 很重要
             response.header("Access-Control-Allow-Origin", origin);
             response.header("Access-Control-Allow-Credentials", "true");
             response.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -52,10 +104,8 @@ public class ChichooApp {
             }
             response.status(200);
             return "OK";
-
         });
         // --- CORS 配置结束 ---
-
 
         System.out.println("Chichoo 智能助手后端启动中...");
 
@@ -109,32 +159,24 @@ public class ChichooApp {
             }
         });
 
-        // === 新增：用户修改密码接口 ===
+        // === 用户修改密码接口 ===
         post("/api/change-password", (request, response) -> {
             response.type("application/json");
-
-            // 检查用户是否已登录
             if (request.session(false) == null || request.session().attribute("username") == null) {
                 response.status(401);
                 return new JSONObject().put("message", "请先登录").toString();
             }
-
             try {
-                String username = request.session().attribute("username"); // 从会话中获取当前用户名
-
+                String username = request.session().attribute("username");
                 JSONObject json = new JSONObject(request.body());
                 String oldPassword = json.optString("oldPassword");
                 String newPassword = json.optString("newPassword");
-
-                // 验证旧密码是否正确
                 if (users.containsKey(username) && users.get(username).equals(oldPassword)) {
-                    // 更新为新密码
                     users.put(username, newPassword);
                     System.out.println("用户 '" + username + "' 修改密码成功。");
                     response.status(200);
                     return new JSONObject().put("message", "密码修改成功").toString();
                 } else {
-                    // 旧密码错误
                     response.status(401);
                     return new JSONObject().put("message", "旧密码不正确").toString();
                 }
@@ -156,76 +198,70 @@ public class ChichooApp {
             return new JSONObject().put("message", "已成功登出").toString();
         });
 
-        // === 获取登录状态的接口 (修复用户名显示问题) ===
+        // === 获取登录状态的接口 ===
         get("/api/status", (request, response) -> {
             response.type("application/json");
             JSONObject statusJson = new JSONObject();
-
-            // 添加调试信息
-            System.out.println("检查登录状态 - Session: " +
-                    (request.session(false) != null ? request.session().id() : "null"));
-
             if (request.session(false) != null && request.session().attribute("username") != null) {
                 String username = request.session().attribute("username");
-                System.out.println("用户已登录: " + username);
                 statusJson.put("loggedIn", true);
-                statusJson.put("username", username); // 直接放入字符串，不要用Optional包装
+                statusJson.put("username", username);
             } else {
-                System.out.println("用户未登录");
                 statusJson.put("loggedIn", false);
             }
             return statusJson.toString();
         });
 
+        // === 新增：获取聊天历史记录的接口 ===
+        get("/api/chat/history", (request, response) -> {
+            response.type("application/json");
+            if (request.session(false) == null || request.session().attribute("username") == null) {
+                response.status(401);
+                return new JSONObject().put("message", "请先登录").toString();
+            }
+            String username = request.session().attribute("username");
+            List<Map<String, String>> userHistory = chatHistories.getOrDefault(username, new ArrayList<>());
+            return new org.json.JSONArray(userHistory).toString();
+        });
+
         // === 文件上传接口 ===
         post("/api/upload", (request, response) -> {
-            // 检查登录状态
             if (request.session(false) == null || request.session().attribute("username") == null) {
                 response.status(401);
                 return "请先登录后再进行操作。";
             }
-
             request.attribute("org.eclipse.jetty.multipartConfig", new MultipartConfigElement("/temp"));
             response.type("text/plain; charset=utf-8");
-
             String ollamaApiResponse = "";
             String errorMessage = "";
-
             try {
                 Part filePart = request.raw().getPart("file");
                 String uploadedFileName = filePart.getSubmittedFileName();
-
-                System.out.println("开始处理上传的文件: " + uploadedFileName);
-
-                // 1. 使用我们的工具类提取文本
+                Part modelPart = request.raw().getPart("model");
+                String modelName = "deepseek-r1:70b";
+                if (modelPart != null) {
+                    modelName = new String(modelPart.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                }
+                System.out.println("开始处理上传的文件: " + uploadedFileName + " (使用模型: " + modelName + ")");
                 String extractedText;
                 try (InputStream inputStream = filePart.getInputStream()) {
                     extractedText = TextExtractor.extractText(inputStream, uploadedFileName);
                 }
-
                 if (extractedText.isEmpty()) {
                     return "无法从文档中提取任何文本内容。";
                 }
-
                 System.out.println("文本提取成功，准备发送给Ollama进行分析...");
-
-                // 2. 将提取的文本发送给 Ollama
                 String promptForOllama = "请对以下内容进行总结和分析：\n\n" + extractedText;
-
                 String ollamaUrl = "http://172.16.24.136:11434/api/chat";
-                String modelName = "deepseek-r1:70b";
-
                 List<Map<String, String>> messagesList = new ArrayList<>();
                 Map<String, String> userMessageMap = new HashMap<>();
                 userMessageMap.put("role", "user");
                 userMessageMap.put("content", promptForOllama);
                 messagesList.add(userMessageMap);
-
                 JSONObject requestJsonToOllama = new JSONObject();
                 requestJsonToOllama.put("model", modelName);
                 requestJsonToOllama.put("messages", messagesList);
                 requestJsonToOllama.put("stream", false);
-
                 HttpClient client = HttpClient.newHttpClient();
                 HttpRequest httpRequest = HttpRequest.newBuilder()
                         .uri(URI.create(ollamaUrl))
@@ -233,16 +269,13 @@ public class ChichooApp {
                         .timeout(Duration.ofMinutes(3))
                         .POST(HttpRequest.BodyPublishers.ofString(requestJsonToOllama.toString(), StandardCharsets.UTF_8))
                         .build();
-
                 HttpResponse<String> httpResponse = client.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
                 if (httpResponse.statusCode() == 200) {
                     JSONObject responseJson = new JSONObject(httpResponse.body());
                     ollamaApiResponse = responseJson.getJSONObject("message").getString("content");
                 } else {
                     errorMessage = "Ollama API 请求失败，状态码: " + httpResponse.statusCode();
                 }
-
             } catch (IllegalArgumentException e) {
                 errorMessage = e.getMessage();
                 response.status(400);
@@ -251,34 +284,22 @@ public class ChichooApp {
                 errorMessage = "处理文件时发生内部错误: " + e.getMessage();
                 response.status(500);
             }
-
             return !errorMessage.isEmpty() ? "Chichoo 错误: " + errorMessage : ollamaApiResponse;
         });
 
-        // === 聊天接口 (添加更详细的调试信息) ===
+        // === 聊天接口 ===
         post("/chat", (request, response) -> {
-            // 添加详细的会话检查和调试信息
-            System.out.println("聊天请求 - Session: " +
-                    (request.session(false) != null ? request.session().id() : "null"));
-
-            if (request.session(false) != null) {
-                String username = request.session().attribute("username");
-                System.out.println("Session中的用户名: " + username);
-            }
-
             if (request.session(false) == null || request.session().attribute("username") == null) {
                 System.out.println("聊天请求被拒绝：用户未登录");
                 response.status(401);
                 return "请先登录后再进行操作。";
             }
-
             String loggedInUsername = request.session().attribute("username");
-            String userMessage = request.body();
-            System.out.println("收到来自用户 '" + loggedInUsername + "' 的消息: '" + userMessage + "'");
-
+            JSONObject requestJson = new JSONObject(request.body());
+            String userMessage = requestJson.getString("message");
+            String modelName = requestJson.optString("model", "deepseek-r1:70b");
+            System.out.println("收到来自用户 '" + loggedInUsername + "' 的消息: '" + userMessage + "' (使用模型: " + modelName + ")");
             String ollamaUrl = "http://172.16.24.136:11434/api/chat";
-            String modelName = "deepseek-r1:70b";
-
             String ollamaApiResponse = "";
             String errorMessage = "";
             try {
@@ -291,12 +312,10 @@ public class ChichooApp {
                 userMessageMap.put("role", "user");
                 userMessageMap.put("content", userMessage);
                 messagesList.add(userMessageMap);
-
                 JSONObject requestJsonToOllama = new JSONObject();
                 requestJsonToOllama.put("model", modelName);
                 requestJsonToOllama.put("messages", messagesList);
                 requestJsonToOllama.put("stream", false);
-
                 HttpClient client = HttpClient.newHttpClient();
                 HttpRequest httpRequest = HttpRequest.newBuilder()
                         .uri(URI.create(ollamaUrl))
@@ -304,10 +323,22 @@ public class ChichooApp {
                         .POST(HttpRequest.BodyPublishers.ofString(requestJsonToOllama.toString(), StandardCharsets.UTF_8))
                         .build();
                 HttpResponse<String> httpResponse = client.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
                 if (httpResponse.statusCode() == 200) {
                     JSONObject responseJson = new JSONObject(httpResponse.body());
                     ollamaApiResponse = responseJson.getJSONObject("message").getString("content");
+
+                    // 新增：保存用户和 AI 的消息
+                    List<Map<String, String>> userHistory = chatHistories.computeIfAbsent(loggedInUsername, k -> new ArrayList<>());
+                    Map<String, String> userMessageToSave = new HashMap<>();
+                    userMessageToSave.put("role", "user");
+                    userMessageToSave.put("content", userMessage);
+                    userHistory.add(userMessageToSave);
+                    Map<String, String> aiMessageToSave = new HashMap<>();
+                    aiMessageToSave.put("role", "assistant");
+                    aiMessageToSave.put("content", ollamaApiResponse);
+                    userHistory.add(aiMessageToSave);
+                    saveHistoriesToFile();
+
                 } else {
                     errorMessage = "Ollama API 请求失败，状态码: " + httpResponse.statusCode();
                 }
